@@ -1,0 +1,31 @@
+# ============================================================
+# 【产品版本清单】整个产品"当前跑哪些版本"的唯一事实来源
+#
+# 这个文件就是上一轮讨论的核心概念：manifest（清单）
+#   - 每个服务钉死一个具体镜像 tag（git commit sha，可追溯到代码）
+#   - 微服务代码变更 → CI 自动改这里的一行 tag → 产品自动更新
+#   - 回滚 = git revert 这个文件，一秒回到旧版本
+#
+# 初始 tag 用 latest 只是为了第一次能跑起来；
+# 任何一次服务推送后，product.yml 工作流会把它替换成精确 sha
+# ============================================================
+
+services:
+  # ── 微服务1：后端 ──
+  backend:
+    # 镜像来自 demo-backend 仓库的 CI 构建产物
+    image: ghcr.io/wangmingliang1990/demo-backend:latest
+    ports:
+      - "8001:8010"   # 宿主机8001 → 容器内8010（冒烟测试直接访问用）
+
+  # ── 微服务2：前端 ──
+  frontend:
+    image: ghcr.io/wangmingliang1990/demo-frontend:latest
+    environment:
+      # 关键：容器之间用"服务名"当域名互相访问（compose 内置 DNS），
+      # 所以前端调后端不是 127.0.0.1，而是 http://backend:8010
+      BACKEND_URL: http://backend:8010
+    ports:
+      - "8000:8010"   # 冒烟测试访问前端用
+    depends_on:
+      - backend       # 先起后端再起前端（仅控制启动顺序，不代表健康检查）

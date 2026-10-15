@@ -1,0 +1,97 @@
+# ============================================================
+# 【产品自动更新流水线】—— "微服务变了，整个产品自动跟上" 的答案
+#
+# 触发方式：任何服务仓库 CI 构建出新镜像后，发来 service-image-updated 事件
+#   （demo-backend / demo-frontend 的 ci.yml 里 notify 那一步就是发单方）
+#
+# 本工作流做四件事，正好对应"持续部署"的标准动作：
+#   1. 改清单     —— 把 docker-compose.yml 里对应服务的 tag 换成新镜像
+#   2. 装配验证   —— 按新清单把整个产品 docker compose 拉起
+#   3. 冒烟测试   —— pytest 打穿全链路，绿了才算这次更新可信
+#   4. 固化清单   —— 把改过的 compose 提交回 main（这就是"新版本记录在案"）
+#
+# 回滚方法：git revert 那次 bump 提交 → 清单回到旧 tag → 重跑本工作流
+# ============================================================
+
+name: Product Update
+
+on:
+  repository_dispatch:
+    types: [service-image-updated]   # 接收服务仓库的事件
+  workflow_dispatch:                 # 也留个手动按钮，方便演示/首次初始化
+    inputs:
+      service:
+        description: 更新哪个服务
+        type: choice
+        options: [backend, frontend]
+      tag:
+        description: 镜像 tag（git sha 或 latest）
+        default: latest
+
+jobs:
+  update-and-verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # 第4步要把改过的清单 push 回 main，需要写权限
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── 第1步：确定"谁变了、变成哪个版本"，改写清单 ──────────────
+      - name: Bump image tag in docker-compose.yml
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            SERVICE="${{ inputs.service }}"
+            TAG="${{ inputs.tag }}"
+          else
+            SERVICE="${{ github.event.client_payload.service }}"
+            TAG="${{ github.event.client_payload.tag }}"
+          fi
+          echo "本次更新: demo-$SERVICE → $TAG"
+
+          # 把 compose 里 "demo-backend:<旧tag>" 这一行的 tag 换掉
+          # 真实团队这里通常不直接 push，而是开一个 bump PR 走评审 —— demo 简化
+          sed -i -E "s#(demo-${SERVICE}:).*#\1${TAG}#" docker-compose.yml
+          grep -n "image:" docker-compose.yml   # 打印改后的清单，留档在日志里
+
+      # ── 第2步：按新清单装配整个产品 ────────────────────────────
+      - name: Deploy product (docker compose up)
+        run: |
+          # --pull always: 强制拉最新镜像，防止 runner 缓存了旧的同名镜像
+          docker compose pull --quiet
+          docker compose up -d
+
+      - name: Wait for all services healthy
+        run: |
+          # 轮询两个服务的 /health，60 秒内起不来就判失败
+          for i in $(seq 1 30); do
+            if curl -fs http://127.0.0.1:8000/health >/dev/null && \
+               curl -fs http://127.0.0.1:8001/health >/dev/null; then
+              echo "全部就绪"; exit 0
+            fi
+            sleep 2
+          done
+          echo "服务启动超时"; docker compose logs; exit 1
+
+      # ── 第3步：产品级冒烟测试（打穿全链路）───────────────────────
+      - name: Smoke test the whole product
+        run: |
+          pip install -q -r requirements.txt
+          pytest tests -v
+          # 测试挂了会直接非零退出 → 第4步不执行 → 清单保持旧版本，产品"没被污染"
+
+      # ── 第4步：固化新版本清单（只有测试全绿才走到这）─────────────
+      - name: Commit new manifest to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # 有实际变更才提交（比如手动 workflow_dispatch 传了个旧 tag）
+          if ! git diff --quiet docker-compose.yml; then
+            git add docker-compose.yml
+            git commit -m "bump: ${{ github.event.client_payload.service }} -> ${{ github.event.client_payload.tag }} [skip ci]"
+            git push
+          fi
+
+      # 无论成败都清理容器（always() 让这步在失败时也执行，方便看日志后不留残留）
+      - name: Cleanup
+        if: always()
+        run: docker compose down
