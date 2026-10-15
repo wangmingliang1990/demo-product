@@ -20,8 +20,12 @@ BACKEND = os.getenv("BACKEND_URL", "http://127.0.0.1:8001")
 
 
 def test_backend_container_healthy():
-    """后端容器本身活着（清单里钉的这个镜像能启动）"""
-    resp = httpx.get(f"{BACKEND}/health", timeout=10)
+    """后端容器本身活着（清单里钉的这个镜像能启动）
+
+    注意路径是 /api/health：后端的路由都挂在 /api 前缀下，
+    和前端的 /health 不一样，别写错（上次超时就是这个原因）。
+    """
+    resp = httpx.get(f"{BACKEND}/api/health", timeout=10)
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
 

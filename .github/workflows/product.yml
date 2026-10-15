@@ -62,10 +62,12 @@ jobs:
 
       - name: Wait for all services healthy
         run: |
-          # 轮询两个服务的 /health，60 秒内起不来就判失败
+          # 轮询两个服务的存活接口，60 秒内起不来就判失败
+          # 注意：两个服务健康检查路径不一样——前端是 /health，
+          # 后端是 /api/health（见 demo-backend/app/main.py），上次就是踩了这个坑
           for i in $(seq 1 30); do
             if curl -fs http://127.0.0.1:8000/health >/dev/null && \
-               curl -fs http://127.0.0.1:8001/health >/dev/null; then
+               curl -fs http://127.0.0.1:8001/api/health >/dev/null; then
               echo "全部就绪"; exit 0
             fi
             sleep 2
