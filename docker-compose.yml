@@ -14,7 +14,7 @@ services:
   # ── 微服务1：后端 ──
   backend:
     # 镜像来自 demo-backend 仓库的 CI 构建产物
-    image: ghcr.io/wangmingliang1990/demo-backend:4926cb9bcca0eaaa748df6d20966a3738501d15d
+    image: ghcr.io/wangmingliang1990/demo-backend:e1dddfcc534b5d15dd83c965983ec88c8fdc32d0
     ports:
       - "8001:8010"   # 宿主机8001 → 容器内8010（冒烟测试直接访问用）
 
